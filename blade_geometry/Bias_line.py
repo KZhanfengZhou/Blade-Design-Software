@@ -274,8 +274,8 @@ def meanline(re_p, re_s):
     # re_s = re_s[int(0.1 * re_s_len):int(0.9 * re_s_len)]
 
     sc = ref_scale(re_p)
-    m, crossline1, crossline2 = meanline_calc(re_p[int(0.15 * re_p_len):int(0.85 * re_p_len)],
-                                              re_s[int(0.15 * re_s_len):int(0.85 * re_s_len)])
+    m, crossline1, crossline2 = meanline_calc(re_p,
+                                              re_s)
     # m, crossline1, crossline2 = meanline_calc(re_p, re_s)
 
     ax.plot(re_p[:, 0], re_p[:, 1], 'g')
