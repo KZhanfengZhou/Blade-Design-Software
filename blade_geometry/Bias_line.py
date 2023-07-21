@@ -1,4 +1,5 @@
 import numpy as np
+import shapely
 from numpy.linalg import norm
 from matplotlib import pyplot as plt
 from shapely.geometry import LineString
@@ -94,7 +95,25 @@ def check_direction(v1, v2, ref_p=None):
     else:
         if np.dot(v2, ref_p - v1) > 0:
             return 1
-        return -1
+        else:
+            return -1
+
+
+def check_direction_init(p, v, curve, opposite):
+    base = p + 0.1 * v
+    line = LineString([base + 1000 * v, base - 1000 * v])
+    back_sec = line.intersection(LineString(curve))
+    front_sec = line.intersection(LineString(opposite))
+    print(front_sec)
+    if front_sec.geom_type == "LineString" or front_sec.geom_type == "MultiPoint" or back_sec.geom_type == "MultiPoint":
+        return 1
+    back_p = [back_sec.x, back_sec.y]
+    front_p = [front_sec.x, front_sec.y]
+    back_v = base - back_p
+    front_v = base - front_p
+    if np.dot(back_v, front_v) < 0:
+        return 1
+    return -1
 
 
 # Get normal vectors on a curve with direction always pointing towards the reference curve.
@@ -105,10 +124,10 @@ def get_dir_normal(vec, ref, first=False):
     for i in range(1, n - 1):
         if first:
             # This means that the normal needs to be checked wrt difference between current curve and reference curve
-            normals[i] *= check_direction(vec[i], normals[i], ref[int(i * m / n)])
+            normals[i] *= check_direction_init(vec[i], normals[i], vec, ref)
         else:
             # This means that the normal needs to be checked wrt initial normal
-            normals[i] *= check_direction(normals[i], ref[int(i * m / n)])
+            normals[i] *= check_direction(normals[i], ref[i])
     normals[0] = normals[1]
     normals[n - 1] = normals[n - 2]
     return normals
@@ -116,7 +135,7 @@ def get_dir_normal(vec, ref, first=False):
 
 def dynamic_step(i, curve):
     global sc
-    return (0.1 + (1 - np.exp(-0.1 * i)) * 0.1) * sc
+    return (0.01 + (1 - np.exp(-0.1 * i)) * 0.1) * sc
 
 
 # Refactor the curve so that it does not turn into weird shapes
@@ -125,14 +144,14 @@ def refactor(curve):
     for i in range(int(n / 2), 0, -1):
         left = curve[i - 1] - curve[i]
         right = curve[i + 1] - curve[i]
-        if left.dot(right) > 0.0001 * sc:
+        if left.dot(right) > 0:
             for j in range(i + 1, 0, -1):
                 curve[j - 1] = 2 * curve[j] - curve[j + 1]
             break
     for i in range(int(n / 2) + 1, n - 1):
         left = curve[i - 1] - curve[i]
         right = curve[i + 1] - curve[i]
-        if left.dot(right) > 0.0001 * sc:
+        if left.dot(right) > 0:
             for j in range(i - 1, n - 1):
                 curve[j + 1] = 2 * curve[j] - curve[j - 1]
             break
@@ -175,8 +194,10 @@ def meanline_calc(init_c1, init_c2, steps=200):
     # ax.plot(init_c2[:, 0], init_c2[:, 1], 'b')
     c1 = init_c1  # c1: current upper curve
     c2 = init_c2  # c2: current lower curve
-    init_n1 = []  # normal of initial curve
-    init_n2 = []
+    n1 = []
+    n2 = []
+    last_n1 = []  # normal of initial curve
+    last_n2 = []
     points = []
     end_point = []
     cross_line1 = []
@@ -191,8 +212,9 @@ def meanline_calc(init_c1, init_c2, steps=200):
         if inter.geom_type == "Point":
             points.append([inter.x, inter.y])
             ax.plot(inter.x, inter.y, 'b.')
-            if not end_point or norm(end_point) < sc:
-                end_point = [inter.x, inter.y]
+            if not end_point:
+                if norm([inter.x, inter.y]) > sc:
+                    end_point = [inter.x, inter.y]
         elif inter.geom_type == "MultiPoint":
             '''xs = [point.x for point in inter.geoms]
             ys = [point.y for point in inter.geoms]
@@ -200,17 +222,19 @@ def meanline_calc(init_c1, init_c2, steps=200):
             pts = [[point.x, point.y] for point in inter.geoms]
             for pt in pts:
                 points.append(pt)
-                if not end_point or norm(end_point) < sc:
-                    end_point = pt
+                if not end_point:
+                    if norm([inter.x, inter.y]) > sc:
+                        end_point = [inter.x, inter.y]
         # Now, update the curves
         if i == 0:
             n1 = get_dir_normal(init_c1, init_c2, True)
-            init_n1 = n1
             n2 = get_dir_normal(init_c2, init_c1, True)
-            init_n2 = n2
-        else:
-            n1 = get_dir_normal(c1, init_n1)
-            n2 = get_dir_normal(c2, init_n2)
+            print(n1)
+        if i != 0:
+            n1 = get_dir_normal(c1, last_n1)
+            n2 = get_dir_normal(c2, last_n2)
+        last_n1 = n1
+        last_n2 = n2
         c1 = c1 + dynamic_step(i, init_c1) * n1
         c2 = c2 + dynamic_step(i, init_c1) * n2
         c1 = refactor(c1)
@@ -220,11 +244,13 @@ def meanline_calc(init_c1, init_c2, steps=200):
             cross_line2.append(c2)
             # ax.plot(c1[:, 0], c1[:, 1], 'r')
             # ax.plot(c2[:, 0], c2[:, 1], 'g')
+    if not end_point:
+        print("no cross point!")
+        n = np.array([[0, 0]])
+        return n, cross_line1, cross_line2
     points = np.array(points)
     # ax.plot(points[:, 0], points[:, 1], 'b.')
     points = meanline_sort(points, end_point)
-    ax.plot(points[:, 0], points[:, 1], 'r')
-    plt.show()
     return points, cross_line1, cross_line2
 
 
@@ -252,12 +278,12 @@ def meanline(re_p, re_s):
                                               re_s[int(0.15 * re_s_len):int(0.85 * re_s_len)])
     # m, crossline1, crossline2 = meanline_calc(re_p, re_s)
 
-    ax.plot(re_p[:, 0], re_p[:, 1], color='blue')
-    ax.plot(re_s[:, 0], re_s[:, 1], color='blue')
-    ax.plot(m[:, 0], m[:, 1], color='red')
-    # for o in (0, 20):
-    #     ax.plot(crossline2[o][:, 0], crossline2[o][:, 1])
-    #     ax.plot(crossline1[o][:, 0], crossline1[o][:, 1])
+    ax.plot(re_p[:, 0], re_p[:, 1], 'g')
+    ax.plot(re_s[:, 0], re_s[:, 1], 'b')
+    ax.plot(m[:, 0], m[:, 1], 'r.')
+    for o in range(1, 21, 3):
+        ax.plot(crossline2[o][:, 0], crossline2[o][:, 1], 'r')
+        ax.plot(crossline1[o][:, 0], crossline1[o][:, 1], 'y')
     plt.show()
 
     return m
